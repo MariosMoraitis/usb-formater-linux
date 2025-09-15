@@ -1,4 +1,4 @@
-#🙀 USB Formatter Linux 
+# 🙀 USB Formatter Linux 
 
 A **safe and interactive Python CLI tool** to list and format USB drives on Linux. Perfect for personal use and learning system programming with Python.
 
