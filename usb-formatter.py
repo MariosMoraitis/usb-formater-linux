@@ -4,11 +4,47 @@ import subprocess
 import os
 import sys
 import re
+import json
+
+def list_removable_drives():
+    result = subprocess.run(
+        ["lsblk", "-J", "-p", "-o", "NAME,SIZE,FSTYPE,MOUNTPOINT,RM,TRAN,TYPE"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    devices = json.loads(result.stdout)["blockdevices"]
+    rows = {}
+    devices_names = set()
+
+    def add_device(device, depth=0):
+        # rows.append((depth, device))
+        rows[depth] = device
+        for child in device.get("children", []):
+            add_device(child, depth + 1)
+
+    for device in devices:
+        is_removable = str(device.get("rm")).lower() in ("1", "true")
+        uses_usb = str(device.get("tran")).lower() == "usb"
+        if device.get("type") == "disk" and (is_removable or uses_usb):
+            add_device(device)
+
+    if not rows:
+        print("No removable drives found.")
+        return
+
+    print(f"{'NAME':<24} {'SIZE':<8} {'FSTYPE':<8} MOUNTPOINT")
+    for depth, device in rows.items():
+        name = f"{'  ' * depth}{device['name']}"
+        devices_names.add(name.strip().lower())
+        print(f"{name:<24} {device.get('size') or '':<8} {device.get('fstype') or '':<8} {device.get('mountpoint') or ''}")
+
+    return devices_names
 
 def format_usb():
     # Step 1: List devices
     print("\n📂 Available drives:")
-    subprocess.run(["lsblk", "-p", "-o", "NAME,SIZE,FSTYPE,MOUNTPOINT"])#([ "grep", "-E", "sd[a-z][0-9]+"])
+    names = list_removable_drives()
     print()
 
     # Step 2: User Input
@@ -16,6 +52,10 @@ def format_usb():
     if device.lower() == "q" or not device:
         print("Aborted.")
         sys.exit(0)
+
+    if device.lower() not in names:
+        print('Input is not a listed device!')
+        sys.exit(1)
 
     fs_type = input("Enter format type (fat32, ext4, ntfs): ").lower().strip()
     if fs_type not in ["fat32", "ext4", "ntfs"]:
@@ -53,9 +93,15 @@ def format_usb():
         elif fs_type == "ntfs":
             subprocess.run(["sudo", "mkfs.ntfs", "-F", device], check=True)
 
-        print(f"🎉 {device} successfully formatted as {fs_type.upper()}")
-    except subprocess.CalledProcessError:
-        print(f"❌ Error while formatting {device}.")
+        print(f"\n🎉 {device} successfully formatted as {fs_type.upper()}")
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Process Error while formatting {device}:\n{str(e)}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print('\nProgram stopped by the User.')
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ Generic Error while formatting {device}:\n{str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
@@ -72,4 +118,12 @@ _  / / /_____ \__  __  |________  /_   _  / / /_  /_/ /_  /|_/ /__  /| |_  /  __
         print("❌ This script only works on Linux.")
         sys.exit(1)
 
-    format_usb()
+    if not os.geteuid() == 0:
+        print("usb-formatter must be run as root (try: sudo python usb-formatter)")
+        sys.exit(1)
+
+    try:        
+        format_usb()
+    except KeyboardInterrupt:
+        print('\nProgram stopped by the User.')
+        sys.exit(0)
